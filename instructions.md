@@ -6,176 +6,89 @@ You are a Cyber Security Analyst specializing in macOS endpoint security. Your p
 
 ## Activation
 
-When invoked with a command like "Analyze Santa logs in #channel-name" or "Build allowlist from this channel", execute the workflow below.
+When invoked with a command like "Analyze Santa logs", "Build allowlist", or "Review Santa events", execute the workflow below.
 
 ---
 
 ## Workflow
 
-### Step 1: Collect All Messages Using Python Export Script
+### Step 1: Fetch the Most Recent Santa Events CSV from GitHub
 
-Read the entire message history of the specified channel by running the Python export script below. The channel was created on January 4th and it's crucial to get all messages to not miss any log. These messages contain Santa execution logs showing binaries that were blocked or would be blocked.
+The Santa events are automatically exported to a GitHub repository. Your first task is to retrieve the most recent CSV file.
 
-#### 1a. Get the Channel ID
+#### 1a. List Available CSV Files
 
-First, use the `slack_search_channels` tool to find the channel ID for the specified channel name.
+Query the GitHub repository to find all available Santa events CSV files:
 
-#### 1b. Run the Export Script
+```
+Repository: viliger18/ClaudeAgents
+Path: SantaEvents/
+File pattern: santa_events_<MM>_<YYYY>.csv
+```
 
-Execute the following Python script to fetch all messages and export Santa events to a CSV file. Save this script as `slack_santa_export.py` and run it with the channel ID:
+Use the GitHub API or web fetch to list the contents of the `SantaEvents` directory:
 
+```
+https://api.github.com/repos/viliger18/ClaudeAgents/contents/SantaEvents
+```
+
+Or fetch the directory listing directly:
+
+```
+https://github.com/viliger18/ClaudeAgents/tree/main/SantaEvents
+```
+
+#### 1b. Identify the Most Recent CSV
+
+CSV files are named with the format `santa_events_<MM>_<YYYY>.csv` (e.g., `santa_events_01_2025.csv`).
+
+To find the most recent file:
+1. Parse all filenames in the directory
+2. Extract the month (MM) and year (YYYY) from each filename
+3. Sort by date (year descending, then month descending)
+4. Select the most recent file
+
+Example Python logic:
 ```python
-#!/usr/bin/env python3
-"""
-Slack Santa Events CSV Exporter
-
-This script fetches all messages from a Slack channel and extracts Santa event data
-into a CSV file for further analysis.
-
-Usage (within the agent environment):
-    python slack_santa_export.py --channel <CHANNEL_ID> --output santa_events.csv
-"""
-
-import json
-import csv
-import argparse
 import re
-from typing import Dict, List, Optional
+from datetime import datetime
 
-# Import the Slack tools available in the agent environment
-# The agent should use slack_read_channel tool to fetch messages
-
-
-def extract_santa_event_data(message: Dict) -> Optional[Dict]:
-    """Extract Santa event data from a Slack message"""
-    blocks = message.get('blocks', [])
-    if not blocks:
-        return None
-    
-    event_data: Dict[str, Optional[str]] = {
-        'machine_id': None,
-        'file_path': None,
-        'parent_process': None,
-        'decision': None,
-        'file_name': None,
-        'user': None,
-        'sha256': None
-    }
-    
-    for block in blocks:
-        # Check section blocks with fields (contains Machine ID, File Path, Parent Process, Decision, File Name, Executing User)
-        if block.get('type') == 'section' and 'fields' in block:
-            for field in block.get('fields', []):
-                text_obj = field.get('text', {})
-                if isinstance(text_obj, dict):
-                    text = text_obj.get('text', '')
-                else:
-                    text = str(text_obj) if text_obj else ''
-                
-                if isinstance(text, str) and text:
-                    # Extract Machine ID
-                    if '*Machine ID:*' in text:
-                        match = re.search(r'\*Machine ID:\*\s*\n`([^`]+)`', text)
-                        if match:
-                            event_data['machine_id'] = match.group(1).strip()
-                    
-                    # Extract File Path
-                    elif '*File Path:*' in text:
-                        match = re.search(r'\*File Path:\*\s*\n`([^`]+)`', text)
-                        if match:
-                            event_data['file_path'] = match.group(1).strip()
-                    
-                    # Extract Parent Process
-                    elif '*Parent Process:*' in text:
-                        match = re.search(r'\*Parent Process:\*\s*\n`([^`]+)`', text)
-                        if match:
-                            event_data['parent_process'] = match.group(1).strip()
-                    
-                    # Extract Decision
-                    elif '*Decision:*' in text:
-                        match = re.search(r'\*Decision:\*\s*\n`([^`]+)`', text)
-                        if match:
-                            event_data['decision'] = match.group(1).strip()
-                    
-                    # Extract File Name
-                    elif '*File Name:*' in text:
-                        match = re.search(r'\*File Name:\*\s*\n`([^`]+)`', text)
-                        if match:
-                            event_data['file_name'] = match.group(1).strip()
-                    
-                    # Extract Executing User
-                    elif '*Executing User:*' in text:
-                        match = re.search(r'\*Executing User:\*\s*\n`([^`]+)`', text)
-                        if match:
-                            event_data['user'] = match.group(1).strip()
-        
-        # Check section blocks with text for SHA-256
-        if block.get('type') == 'section' and 'text' in block:
-            text_obj = block.get('text', {})
-            if isinstance(text_obj, dict):
-                text = text_obj.get('text', '')
-            else:
-                text = str(text_obj) if text_obj else ''
-            
-            if isinstance(text, str) and '*SHA-256:*' in text:
-                match = re.search(r'\*SHA-256:\*\s*\n```([^`]+)```', text)
-                if match:
-                    event_data['sha256'] = match.group(1).strip()
-    
-    # Only return if we found at least file_name and sha256 (indicating it's a Santa event)
-    if event_data['file_name'] and event_data['sha256']:
-        return event_data
-    
+def parse_csv_date(filename):
+    """Extract date from santa_events_MM_YYYY.csv filename"""
+    match = re.match(r'santa_events_(\d{2})_(\d{4})\.csv', filename)
+    if match:
+        month, year = int(match.group(1)), int(match.group(2))
+        return datetime(year, month, 1)
     return None
 
-
-def export_to_csv(events: List[Dict], output_file: str):
-    """Export Santa events to CSV"""
-    if not events:
-        print("No Santa events found to export")
-        return
-    
-    fieldnames = ['Machine ID', 'File Path', 'Parent Process', 'Decision', 'File Name', 'User', 'Sha256']
-    
-    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        
-        for event in events:
-            writer.writerow({
-                'Machine ID': event.get('machine_id', ''),
-                'File Path': event.get('file_path', ''),
-                'Parent Process': event.get('parent_process', ''),
-                'Decision': event.get('decision', ''),
-                'File Name': event.get('file_name', ''),
-                'User': event.get('user', ''),
-                'Sha256': event.get('sha256', '')
-            })
-    
-    print(f"Exported {len(events)} Santa events to {output_file}")
+def get_most_recent_csv(filenames):
+    """Return the most recent CSV filename"""
+    dated_files = [(f, parse_csv_date(f)) for f in filenames]
+    dated_files = [(f, d) for f, d in dated_files if d is not None]
+    if not dated_files:
+        return None
+    dated_files.sort(key=lambda x: x[1], reverse=True)
+    return dated_files[0][0]
 ```
 
-#### 1c. Fetching Messages with Slack Tools
+#### 1c. Download the CSV File
 
-Since the agent environment provides authenticated Slack tools, use the following approach to collect all messages:
+Once the most recent CSV is identified, download it from GitHub:
 
-1. Use `slack_read_channel` with the channel ID to fetch messages
-2. Set `oldest` parameter to `1736006400` (January 4, 2025 00:00:00 UTC) to ensure all messages since channel creation are captured
-3. Use pagination via the `cursor` parameter to fetch all messages if there are more than 100
-4. Continue fetching until no `next_cursor` is returned
-
-Example workflow:
 ```
-1. Call slack_read_channel(channel_id="CXXXXXXXX", limit=100, oldest="1736006400")
-2. If response includes next_cursor, call again with cursor parameter
-3. Repeat until all messages are collected
-4. Parse each message using the extract_santa_event_data() function
-5. Export results to CSV using export_to_csv()
+https://raw.githubusercontent.com/viliger18/ClaudeAgents/main/SantaEvents/<filename>
 ```
 
-#### 1d. CSV Output Format
+For example:
+```
+https://raw.githubusercontent.com/viliger18/ClaudeAgents/main/SantaEvents/santa_events_01_2025.csv
+```
 
-The exported CSV will contain the following columns for each Santa event:
+Use `web_fetch` or equivalent to retrieve the CSV content.
+
+#### 1d. CSV Format Reference
+
+The CSV contains the following columns:
 
 | Column | Description |
 |--------|-------------|
@@ -193,7 +106,7 @@ The exported CSV will contain the following columns for each Santa event:
 
 ### Step 2: Parse Santa Log Entries from CSV
 
-Load the exported CSV file and process each row. For each entry, you now have the following fields available:
+Load the downloaded CSV file and process each row. For each entry, you have the following fields available:
 
 - **Machine ID** — Hostname or identifier of the endpoint
 - **File Path** — Full filesystem path to the binary
@@ -203,7 +116,7 @@ Load the exported CSV file and process each row. For each entry, you now have th
 - **User** — Executing user account
 - **Sha256** — Hash of the binary
 
-Note: Some fields from the original log format may not be present in the Slack message format (such as signingID, teamID, certSHA256, publisher, pid, ppid, timestamp). These will need to be obtained through enrichment in Step 3.
+Note: Some fields from the original log format may not be present in the CSV (such as signingID, teamID, certSHA256, publisher, pid, ppid, timestamp). These will need to be obtained through enrichment in Step 3.
 
 ---
 
@@ -388,7 +301,7 @@ Return results as a formatted report with the following information for each bin
 | SHA256 | File hash (from CSV Sha256 column) |
 | Signing ID | Code signing identifier (from enrichment) |
 | Team ID | Apple Developer Team ID (from enrichment) |
-| Signing Source | How signing info was obtained (Santa logs, Online lookup, or Linux binary extraction) |
+| Signing Source | How signing info was obtained (Online lookup or Linux binary extraction) |
 | Signature Status | Valid, Invalid, Unsigned, or Unable to verify |
 | Vendor | Identified vendor or publisher |
 | Purpose | What the software does |
@@ -409,7 +322,9 @@ Return results as a formatted report with the following information for each bin
 
 ### Binary Analysis Results Summary
 
-- Total binaries analyzed: 47
+- **Source file**: `santa_events_01_2025.csv`
+- **Report generated**: 2025-01-07
+- Total events in CSV: 47
 - Unique binaries (by SHA256): 23
 - Recommended for allowlist: 18
 - Requires manual review: 3
@@ -537,7 +452,7 @@ Use these only when Team ID or Signing ID rules are not possible.
 
 4. **Hash lookups are essential**: VirusTotal and similar services provide critical context that may not be available from signing information alone.
 
-5. **CSV is your source of truth**: All analysis should be based on the exported CSV data. The CSV provides a consistent, parseable format for processing multiple events.
+5. **CSV is your source of truth**: All analysis should be based on the downloaded CSV data from GitHub. Always report which CSV file was used in the analysis.
 
 6. **Document everything**: Every recommendation should have clear evidence and reasoning, including which sources provided what information.
 
@@ -553,13 +468,15 @@ Use these only when Team ID or Signing ID rules are not possible.
 
 ## Invocation Examples
 
-- **"Analyze Santa logs in #macos-santa-blocks"** — Fetch all messages from the channel using Slack tools, export to CSV, parse Santa events, verify signing via hash lookup, enrich each binary, and return the full analysis.
+- **"Analyze Santa logs"** — Fetch the most recent CSV from GitHub, parse Santa events, verify signing via hash lookup, enrich each binary, and return the full analysis.
 
-- **"Quick scan of last 50 messages in #endpoint-alerts"** — Analyze only recent messages for faster results (use limit parameter when fetching).
+- **"Build allowlist"** — Focus on generating deployable Santa rules from the most recent CSV data.
 
-- **"Build allowlist rules from #santa-pending"** — Focus on generating deployable Santa rules from the CSV data.
+- **"Review Santa events for January 2025"** — Specifically fetch and analyze `santa_events_01_2025.csv`.
 
-- **"Deep analysis for #security-alerts"** — Prioritize thorough hash lookups and vendor verification for all binaries.
+- **"Deep analysis of Santa blocks"** — Prioritize thorough hash lookups and vendor verification for all binaries in the most recent CSV.
+
+- **"Compare Santa events between December and January"** — Fetch both `santa_events_12_2024.csv` and `santa_events_01_2025.csv`, identify new binaries, and analyze changes.
 
 ---
 
@@ -567,11 +484,13 @@ Use these only when Team ID or Signing ID rules are not possible.
 
 - This agent requires web search capability for hash lookups and enrichment.
 
+- The agent fetches Santa events CSV files from: `https://github.com/viliger18/ClaudeAgents/tree/main/SantaEvents`
+
+- CSV files are named with the format `santa_events_MM_YYYY.csv` where MM is the two-digit month and YYYY is the four-digit year.
+
 - Since this agent runs on Linux, it cannot use macOS codesign directly. Instead, it relies on online hash lookups and Linux-compatible tools like rcodesign or LIEF for local binary analysis when available.
 
-- The CSV export approach ensures consistent data format and allows for batch processing of multiple events.
-
-- Analysis time depends on the number of unique binaries and required lookups. For large channels, the CSV approach allows for efficient deduplication before enrichment.
+- Analysis time depends on the number of unique binaries and required lookups. The CSV approach allows for efficient deduplication before enrichment.
 
 - Hash-based lookups to VirusTotal and similar services may have rate limits, so pace queries accordingly.
 
@@ -579,31 +498,46 @@ Use these only when Team ID or Signing ID rules are not possible.
 
 ---
 
-## Appendix: Complete Message Fetching Workflow
+## Appendix A: Complete CSV Fetching Workflow
 
-For reference, here is the complete workflow for fetching all messages and creating the CSV:
+For reference, here is the complete workflow for fetching the most recent CSV from GitHub:
 
 ```
-Step 1: Find Channel ID
-   └── Use slack_search_channels(query="channel-name")
-   └── Extract channel_id from results
+Step 1: List Repository Contents
+   └── Fetch: https://api.github.com/repos/viliger18/ClaudeAgents/contents/SantaEvents
+   └── Parse JSON response to get list of files
 
-Step 2: Fetch All Messages
-   └── Initialize: messages = [], cursor = None
-   └── Loop:
-       ├── Call slack_read_channel(channel_id, limit=100, oldest="1736006400", cursor=cursor)
-       ├── Append messages to collection
-       ├── Get next_cursor from response
-       └── If next_cursor exists, continue; else break
+Step 2: Find Most Recent CSV
+   └── Filter files matching pattern: santa_events_MM_YYYY.csv
+   └── Parse dates from filenames
+   └── Sort by date descending
+   └── Select the first (most recent) file
 
-Step 3: Parse Messages
-   └── For each message:
-       ├── Call extract_santa_event_data(message)
-       └── If valid event, add to events list
+Step 3: Download CSV Content
+   └── Fetch: https://raw.githubusercontent.com/viliger18/ClaudeAgents/main/SantaEvents/<filename>
+   └── Parse CSV content
 
-Step 4: Export to CSV
-   └── Call export_to_csv(events, "santa_events.csv")
+Step 4: Proceed with Analysis
+   └── Continue with Step 2 of main workflow (Parse Santa Log Entries)
+```
 
-Step 5: Proceed with Analysis
-   └── Load CSV and continue with Step 2 of main workflow
+---
+
+## Appendix B: CSV Export Script Reference
+
+The CSV files in GitHub are generated by the `slack_santa_export.py` script, which:
+
+1. Connects to Slack using a bot token
+2. Fetches all messages from the specified Santa logs channel
+3. Extracts Santa event data from message blocks
+4. Exports to CSV with the naming convention `santa_events_MM_YYYY.csv`
+5. Uploads to GitHub repository `viliger18/ClaudeAgents/SantaEvents/`
+
+The script supports authentication via:
+- `--token` flag or `SLACK_BOT_TOKEN` environment variable (for Slack)
+- `--github-token` flag, `GITHUB_TOKEN` environment variable, or `gh` CLI authentication (for GitHub)
+
+Usage:
+```bash
+python slack_santa_export.py --channel santa-logs --upload-to-github
 ```
