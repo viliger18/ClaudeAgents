@@ -286,13 +286,25 @@ Assign a risk level based on all gathered evidence:
 
 ### Step 5: Generate Allowlist Report
 
-Produce a structured report with all findings using the output format described below.
+Produce a structured report with all findings using the output format described below. **The report MUST include the Hosts Section and Statistics Section.**
 
 ---
 
 ## Output Format
 
-Return results as a formatted report with the following information for each binary:
+Return results as a formatted report with the following sections in order:
+
+1. **Executive Summary** — Overview statistics and risk distribution
+2. **Hosts Section** — List of all machines and their users (REQUIRED)
+3. **Statistics Section** — Distribution analysis and machine rankings (REQUIRED)
+4. **Critical and High Risk Findings** — Detailed analysis of concerning binaries
+5. **Blocked Binary Analysis** — Analysis of any BLOCK_BINARY decisions
+6. **Recommended Allowlist Rules** — Team ID, Signing ID, and SHA256 rules
+7. **Action Items** — Prioritized list of recommended actions
+
+### Binary Analysis Fields
+
+For each unique binary analyzed, include:
 
 | Field | Description |
 |-------|-------------|
@@ -318,17 +330,202 @@ Return results as a formatted report with the following information for each bin
 
 ---
 
+## Hosts Section (REQUIRED)
+
+The Hosts Section MUST be included in every report. It provides a complete inventory of all machines observed in the Santa logs.
+
+### Format
+
+```markdown
+## Hosts Section
+
+This section lists all machines (by UUID) and the users observed running binaries on each machine.
+
+**Total Machines:** [count]
+
+| Machine UUID | User(s) | Unique Binaries |
+|--------------|---------|-----------------|
+| `[UUID-1]` | user1, user2, root | [count] |
+| `[UUID-2]` | user3, root | [count] |
+...
+```
+
+### Data to Include
+
+For each unique Machine ID in the CSV:
+- **Machine UUID** — The full machine identifier
+- **User(s)** — Comma-separated list of all users who executed binaries on this machine
+- **Unique Binaries** — Count of distinct SHA256 hashes observed on this machine
+
+### Purpose
+
+The Hosts Section helps security teams:
+- Identify all endpoints in the fleet
+- Map users to their assigned machines
+- Spot machines with unusual activity patterns
+- Verify MDM enrollment coverage
+
+---
+
+## Statistics Section (REQUIRED)
+
+The Statistics Section MUST be included in every report. It provides distribution analysis to identify patterns and anomalies.
+
+### Format
+
+```markdown
+## Statistics Section
+
+### Overview
+
+| Metric | Value |
+|--------|-------|
+| Total Machines | [count] |
+| 50% Threshold | [count] machines |
+| Binaries in >50% of machines | [count] |
+| Binaries in ≤50% of machines | [count] |
+
+### Binaries in MORE than 50% of Machines
+
+These binaries are widely deployed and likely represent standard enterprise software.
+
+| Binary Name | SHA256 | Machines | % Coverage |
+|-------------|--------|----------|------------|
+| [name] | `[hash]...` | [X]/[total] | [X]% |
+...
+
+### Binaries in LESS than 50% of Machines
+
+These binaries have limited deployment - may indicate specialized tools or potential anomalies.
+
+| Binary Name | SHA256 | Machines | % Coverage |
+|-------------|--------|----------|------------|
+| [name] | `[hash]...` | [X]/[total] | [X]% |
+...
+
+### Machine(s) with Most Unique Binaries
+
+**Maximum unique binaries on a single machine:** [count]
+
+| Rank | Machine UUID | Unique Binaries | User(s) |
+|------|--------------|-----------------|---------|
+| 1 | `[UUID]` | [count] ⭐ | [users] |
+| 2 | `[UUID]` | [count] | [users] |
+...
+```
+
+### Calculations Required
+
+1. **Binaries in MORE than 50% of machines**
+   - Calculate: `threshold = total_machines * 0.5`
+   - Filter: All binaries where `machine_count > threshold`
+   - Sort: By machine count descending
+   - Include: Binary name, SHA256, machine count, percentage
+
+2. **Binaries in LESS than 50% of machines**
+   - Filter: All binaries where `machine_count <= threshold`
+   - Sort: By machine count descending
+   - Show: Top 20-30 for readability
+   - Include: Binary name, SHA256, machine count, percentage
+
+3. **Machine(s) with Most Unique Binaries**
+   - Calculate: Count of unique SHA256 hashes per Machine ID
+   - Sort: By unique binary count descending
+   - Identify: Machine(s) with the maximum count (mark with ⭐)
+   - Show: Top 10-15 machines
+   - Include: Rank, Machine UUID, unique binary count, associated users
+
+### Purpose
+
+The Statistics Section helps security teams:
+- Identify standard enterprise software (>50% deployment)
+- Spot potentially unauthorized software (<50% deployment)
+- Find power users or developer machines (most unique binaries)
+- Detect anomalous machines that may need investigation
+
+---
+
 ## Example Output
 
 ### Binary Analysis Results Summary
 
 - **Source file**: `santa_events_01_2025.csv`
 - **Report generated**: 2025-01-07
-- Total events in CSV: 47
-- Unique binaries (by SHA256): 23
-- Recommended for allowlist: 18
-- Requires manual review: 3
-- Recommended to block: 2
+- Total events in CSV: 1768
+- Unique binaries (by SHA256): 549
+- Total machines: 39
+- Recommended for allowlist: 323
+- Requires manual review: 225
+- Recommended to block: 1
+
+---
+
+## Hosts Section
+
+This section lists all machines (by UUID) and the users observed running binaries on each machine.
+
+**Total Machines:** 39
+
+| Machine UUID | User(s) | Unique Binaries |
+|--------------|---------|-----------------|
+| `05509304-4A52-51B1-9C86-88B4EC674D2B` | liorfarchi, root | 15 |
+| `05D0951A-0216-5E4C-8929-52A9EC3894D7` | root, shalevhiba | 30 |
+| `163D22D7-8D8A-56DD-8F05-F23CCABBB388` | edeneliel, root | 67 |
+| `F15BF346-4295-5CF0-B616-E428EF5CC7E0` | danielk, root | 125 |
+...
+
+---
+
+## Statistics Section
+
+### Overview
+
+| Metric | Value |
+|--------|-------|
+| Total Machines | 39 |
+| 50% Threshold | 19.5 machines |
+| Binaries in >50% of machines | 3 |
+| Binaries in ≤50% of machines | 546 |
+
+### Binaries in MORE than 50% of Machines
+
+These binaries are widely deployed and likely represent standard enterprise software.
+
+| Binary Name | SHA256 | Machines | % Coverage |
+|-------------|--------|----------|------------|
+| jamf | `9f8ea8caa1599386...` | 39/39 | 100.0% |
+| launcher | `9d27ac8e3083ca2e...` | 26/39 | 66.7% |
+| GoogleUpdater | `6b63250d01dc9a24...` | 25/39 | 64.1% |
+
+### Binaries in LESS than 50% of Machines (Top 20)
+
+| Binary Name | SHA256 | Machines | % Coverage |
+|-------------|--------|----------|------------|
+| Google Chrome Helper | `178e5edc81e0056d...` | 17/39 | 43.6% |
+| Google Chrome Helper (Renderer) | `300b13a0788a7079...` | 16/39 | 41.0% |
+| Falcon | `44749f6220d97f79...` | 13/39 | 33.3% |
+| ruby | `add4766859592549...` | 13/39 | 33.3% |
+| ZoomUpdater | `fcbd84ce2c5d07db...` | 12/39 | 30.8% |
+...
+
+### Machine(s) with Most Unique Binaries
+
+**Maximum unique binaries on a single machine:** 125
+
+| Rank | Machine UUID | Unique Binaries | User(s) |
+|------|--------------|-----------------|---------|
+| 1 | `F15BF346-4295-5CF0-B616-E428EF5CC7E0` | 125 ⭐ | danielk, root |
+| 2 | `C0833310-13E7-5785-A04A-53F36463FEF2` | 93 | amir, root |
+| 3 | `163D22D7-8D8A-56DD-8F05-F23CCABBB388` | 67 | edeneliel, root |
+| 4 | `5F9EDA11-82AB-50E8-BAFA-23704D2743C7` | 58 | amit-turner, root |
+| 5 | `2F8A8328-8E97-5A8E-8DE7-A72F3C1C9D4E` | 57 | amit, root |
+...
+
+**Analysis Notes:**
+- Machines with significantly more unique binaries than average may be developer workstations
+- The machine with the most binaries (danielk) has 125 unique binaries - typical for a power user
+
+---
 
 ### Detailed Findings
 
@@ -384,23 +581,6 @@ Return results as a formatted report with the following information for each bin
 | Recommendation | BLOCK |
 | Evidence | VirusTotal shows 15/70 detections (Trojan.GenericKD), no legitimate software matches, unsigned, hidden directory |
 | Notes | Located in /tmp with hidden directory. Multiple AV detections. Requires immediate incident investigation. Preserve binary for forensics. |
-
-#### Binary 4: internal_tool
-
-| Field | Value |
-|-------|-------|
-| Path | /Applications/InternalTool.app/Contents/MacOS/internal_tool |
-| SHA256 | 1a2b3c4d5e6f... |
-| Signing ID | com.example.internaltool |
-| Team ID | ABC123XYZ (MISMATCH DETECTED) |
-| Signing Source | Multiple sources with discrepancy ⚠️ |
-| Signature Status | Valid but inconsistent |
-| Vendor | Unknown - Team ID not found in public records |
-| Purpose | Unknown |
-| Risk Level | HIGH |
-| Recommendation | REVIEW |
-| Evidence | Team ID mismatch between sources requires investigation. Hash not found on VirusTotal. |
-| Notes | ALERT - Signing information discrepancy detected. Possible binary replacement or log corruption. Escalate to security team. |
 
 ---
 
@@ -464,19 +644,23 @@ Use these only when Team ID or Signing ID rules are not possible.
 
 10. **Track decision patterns**: If a binary was previously allowed but is now being blocked, this may indicate a configuration change or updated binary version.
 
+11. **Always include Hosts Section**: Every report MUST include a complete list of machines and their associated users.
+
+12. **Always include Statistics Section**: Every report MUST include the distribution statistics with the three required calculations (>50%, ≤50%, and most unique binaries).
+
 ---
 
 ## Invocation Examples
 
-- **"Analyze Santa logs"** — Fetch the most recent CSV from GitHub, parse Santa events, verify signing via hash lookup, enrich each binary, and return the full analysis.
+- **"Analyze Santa logs"** — Fetch the most recent CSV from GitHub, parse Santa events, verify signing via hash lookup, enrich each binary, and return the full analysis including Hosts and Statistics sections.
 
-- **"Build allowlist"** — Focus on generating deployable Santa rules from the most recent CSV data.
+- **"Build allowlist"** — Focus on generating deployable Santa rules from the most recent CSV data, including host inventory and distribution statistics.
 
-- **"Review Santa events for January 2025"** — Specifically fetch and analyze `santa_events_01_2025.csv`.
+- **"Review Santa events for January 2025"** — Specifically fetch and analyze `santa_events_01_2025.csv` with complete Hosts and Statistics sections.
 
 - **"Deep analysis of Santa blocks"** — Prioritize thorough hash lookups and vendor verification for all binaries in the most recent CSV.
 
-- **"Compare Santa events between December and January"** — Fetch both `santa_events_12_2024.csv` and `santa_events_01_2025.csv`, identify new binaries, and analyze changes.
+- **"Compare Santa events between December and January"** — Fetch both `santa_events_12_2024.csv` and `santa_events_01_2025.csv`, identify new binaries, and analyze changes including host-level comparisons.
 
 ---
 
@@ -540,4 +724,51 @@ The script supports authentication via:
 Usage:
 ```bash
 python slack_santa_export.py --channel santa-logs --upload-to-github
+```
+
+---
+
+## Appendix C: Statistics Calculation Reference
+
+Python reference implementation for the Statistics Section calculations:
+
+```python
+from collections import defaultdict
+
+# After parsing CSV and deduplicating by SHA256...
+
+# Calculate machine-user mapping
+machine_users = defaultdict(set)
+for row in data:
+    machine_users[row['Machine ID']].add(row['User'])
+
+# Calculate machine binary counts
+machine_binary_count = defaultdict(set)
+for sha, info in unique_hashes.items():
+    for machine in info['machines']:
+        machine_binary_count[machine].add(sha)
+
+total_machines = len(machine_users)
+threshold_50 = total_machines * 0.5
+
+# 1. Binaries in MORE than 50% of machines
+binaries_over_50 = [
+    (sha, info['file_names'], len(info['machines']), len(info['machines'])/total_machines*100)
+    for sha, info in unique_hashes.items()
+    if len(info['machines']) > threshold_50
+]
+binaries_over_50.sort(key=lambda x: -x[2])
+
+# 2. Binaries in LESS than 50% of machines  
+binaries_under_50 = [
+    (sha, info['file_names'], len(info['machines']), len(info['machines'])/total_machines*100)
+    for sha, info in unique_hashes.items()
+    if len(info['machines']) <= threshold_50
+]
+binaries_under_50.sort(key=lambda x: -x[2])
+
+# 3. Machine(s) with most unique binaries
+machine_rankings = [(machine, len(binaries)) for machine, binaries in machine_binary_count.items()]
+machine_rankings.sort(key=lambda x: -x[1])
+max_binaries = machine_rankings[0][1] if machine_rankings else 0
 ```
